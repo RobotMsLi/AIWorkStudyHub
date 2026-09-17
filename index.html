@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <!-- 移动端友好，禁止双击缩放 -->
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>AI 学习工作台</title>
+  <!-- KaTeX 数学公式样式 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <!-- 项目主样式 -->
+  <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ==================== 顶栏 ==================== -->
+  <header class="topbar">
+    <!-- 移动端菜单按钮（小屏才显示） -->
+    <button class="icon-btn mobile-only" id="mobileMenuBtn">☰</button>
+
+    <!-- Logo -->
+    <div class="logo">
+      <div class="logo-mark">AI</div>
+      <div class="logo-text">AI 学习工作台</div>
+    </div>
+
+    <!-- 侧栏折叠按钮（桌面端用，默认隐藏） -->
+    <button class="icon-btn" id="collapseBtn" style="display:none">☰</button>
+
+    <!-- 全局搜索框 -->
+    <div class="tb-search">
+      <input id="globalSearch" placeholder="搜索笔记…" autocomplete="off">
+      <button class="btn-search" id="searchBtn">搜索</button>
+      <div class="search-results" id="searchResults"></div>
+    </div>
+
+    <!-- 右侧状态区 -->
+    <div class="tb-right">
+      <div class="stat" title="今日学习时长"><span id="todayTime">0 秒</span><small>今日</small></div>
+      <div class="stat" title="待复习闪卡"><span id="dueCount">0</span><small>待复习</small></div>
+      <div class="cloud-btn" id="cloudBtn" title="云端同步状态"><span class="cdot"></span><span id="cloudText">连接中…</span></div>
+      <div class="ai-status" id="aiStatus" title="点击配置 AI"><span class="dot"></span><span id="aiStatusText">在线 AI</span></div>
+      <div class="clock"><div id="clockTime">--:--:--</div><div id="clockDate">----</div></div>
+      <div class="avatar logged-out" id="avatarBtn" title="点击登录">
+        <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      </div>
+      <button class="icon-btn mobile-only" id="mobileAiBtn">✨</button>
+    </div>
+  </header>
+
+  <!-- ==================== 主体区 ==================== -->
+  <div class="layout">
+
+    <!-- 侧栏遮罩（移动端弹出侧栏时显示） -->
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+    <!-- 左侧栏：导航 + 笔记本列表 -->
+    <aside class="sidebar" id="sidebar">
+      <nav class="nav" id="nav">
+        <button class="nav-item active" data-view="notes"><span class="ni">📝</span><span class="nt">智能笔记</span></button>
+        <button class="nav-item" data-view="flash"><span class="ni">🎴</span><span class="nt">闪卡池</span></button>
+        <button class="nav-item" data-view="mind"><span class="ni">🧠</span><span class="nt">思维导图</span></button>
+        <button class="nav-item" data-view="compare"><span class="ni">⚖️</span><span class="nt">概念辨析</span></button>
+        <button class="nav-item" data-view="rag"><span class="ni">📚</span><span class="nt">知识问答</span></button>
+        <button class="nav-item" data-view="stats"><span class="ni">📊</span><span class="nt">学习统计</span></button>
+        <button class="nav-item" data-view="settings"><span class="ni">⚙️</span><span class="nt">设置</span></button>
+      </nav>
+      <div class="nb-section">
+        <div class="nb-head"><span>笔记本</span><button class="mini-btn" id="addNotebook" title="新建笔记本">+</button></div>
+        <div id="notebookList"></div>
+      </div>
+    </aside>
+
+    <!-- 主内容区（由 JS 动态渲染） -->
+    <main class="main" id="main"></main>
+
+    <!-- AI 面板遮罩 -->
+    <div class="ai-backdrop" id="aiBackdrop"></div>
+
+    <!-- 右侧 AI 聊天面板 -->
+    <aside class="ai-panel" id="aiPanel">
+      <div class="ai-head">
+        <div class="ai-title"><span class="dot-ind" id="aiDot"></span> AI 小助手</div>
+        <span class="ai-meta" id="aiModelLabel">qwen-turbo</span>
+        <button class="icon-btn" id="clearChat" title="清空对话">⌫</button>
+      </div>
+      <div class="ai-chat" id="aiChat"></div>
+      <div class="ai-quick" id="aiQuick">
+        <button data-q="总结当前笔记，用 3-5 个要点">✦ 总结笔记</button>
+        <button data-q="基于当前笔记出 3 道理解题，附答案">? 基于笔记出题</button>
+        <button data-q="帮我写一段 Python 快速排序代码">💻 写代码</button>
+        <button data-q="用通俗的话解释一下什么是熵">🧪 解释概念</button>
+      </div>
+      <div class="ai-input">
+        <textarea id="aiInput" placeholder="随便问我什么…  ⏎ 发送" rows="1"></textarea>
+        <button id="aiSend">➤</button>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- 命令面板（Ctrl/Cmd+K 呼出） -->
+<div class="cmdk-backdrop" id="cmdkBackdrop">
+  <div class="cmdk">
+    <input class="cmdk-input" id="cmdkInput" placeholder="输入命令或搜索…">
+    <div class="cmdk-list" id="cmdkList"></div>
+  </div>
+</div>
+
+<!-- ==================== 第三方库 ==================== -->
+<script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<!-- ==================== 业务代码==================== -->
+<script src="./js/01-core.js"></script>
+<script src="./js/02-ai.js"></script>
+<script src="./js/03-cloud.js"></script>
+<script src="./js/04-views.js"></script>
+<script src="./js/05-chat.js"></script>
+<script src="./js/06-cmdk.js"></script>
+<script src="./js/07-app.js"></script>
+</body>
+</html>

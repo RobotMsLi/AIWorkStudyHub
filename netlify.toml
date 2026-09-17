@@ -1,0 +1,16 @@
+# Netlify 部署配置
+# publish    = 静态站点根目录
+# functions  = 函数目录（含 ai-proxy.js）
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# 使用 esbuild 打包函数
+[functions]
+  node_bundler = "esbuild"
+
+# 静态资源不强缓存，方便更新
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
