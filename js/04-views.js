@@ -187,9 +187,10 @@ function renderTopStats() {
   if (dueEl) dueEl.textContent = dueCards().length;
 
   // AI 状态
-  const aiStatusEl = $('#aiStatus'); if (aiStatusEl) aiStatusEl.classList.add('on');
-  const aiDotEl = $('#aiDot'); if (aiDotEl) aiDotEl.classList.remove('off');
-  const st = $('#aiStatusText'); if (st) st.textContent = '在线 AI';
+ const hasAI = S.aiConfig.provider && S.aiConfig.apiKey && S.aiConfig.baseUrl;
+const aiStatusEl=$('#aiStatus'); if(aiStatusEl) aiStatusEl.classList.toggle('on', !!hasAI);
+const aiDotEl=$('#aiDot'); if(aiDotEl) aiDotEl.classList.toggle('off', !hasAI);
+const st=$('#aiStatusText'); if(st) st.textContent = hasAI ? '在线 AI' : '未配置 AI';
   const ml = $('#aiModelLabel'); if (ml) ml.textContent = S.aiConfig.model || 'qwen-turbo';
 
   // 云同步状态
@@ -256,10 +257,12 @@ function renderAll() {
 function renderMain() {
   const map = {
     notes: renderNotesView, flash: renderFlashView, mind: renderMindView,
-    compare: renderCompareView, rag: renderRagView, stats: renderStatsView, settings: renderSettingsView
+    compare: renderCompareView, rag: renderRagView, stats: renderStatsView,
+    settings: renderSettingsView, wrong: renderWrongView
   };
   (map[currentView] || renderNotesView)();
 }
+
 
 /* ============ 笔记视图 ============ */
 function renderNotesView() {
@@ -286,14 +289,16 @@ function renderNotesView() {
             <span class="cur">${esc(note.title || '未命名')}</span>
           </div>
           <div class="tool-actions">
-            <span class="save-badge" id="saveBadge">已保存</span>
-            <button class="chip ai-active" data-ai="summary">✦ 摘要</button>
-            <button class="chip" data-ai="expand">⇢ 扩展</button>
-            <button class="chip" data-ai="quiz">? 自测题</button>
-            <button class="chip" data-ai="mind">◈ 导图</button>
-            <button class="chip" data-ai="cards">▣ 闪卡</button>
-            <button class="chip danger" data-act="del">🗑 删除</button>
-          </div>
+  <span class="save-badge" id="saveBadge">已保存</span>
+  <button class="chip ai-active" data-ai="summary">✦ 摘要</button>
+  <button class="chip" data-ai="expand">⇢ 扩展</button>
+  <button class="chip" data-ai="quiz">? 自测题</button>
+  <button class="chip" data-ai="mind">◈ 导图</button>
+  <button class="chip" data-ai="cards">▣ 闪卡</button>
+  <button class="chip" data-ai="feynman">🎓 费曼</button>
+ <button class="chip" id="voiceInputBtn">🎤 语音输入</button>
+  <button class="chip danger" data-act="del">🗑 删除</button>
+</div>
         </div>
         <div class="tabs">
           <div class="tab active" data-tab="edit">编辑</div>
@@ -344,22 +349,54 @@ function renderNotesView() {
       }
     });
 
+   
     // AI 工具按钮
-    $$('[data-ai]', main).forEach(btn => btn.onclick = async () => {
-      note.title = te.value;
-      note.content = be.value;
-      note.updatedAt = Date.now();
-      saveAll();
-      const t = btn.dataset.ai;
-      if (t === 'summary') await aiSummary(note);
-      else if (t === 'expand') await aiExpand(note);
-      else if (t === 'quiz') await aiQuiz(note);
-      else if (t === 'mind') await aiMind(note);
-      else if (t === 'cards') await aiGenCards(note);
-    });
+$$('[data-ai]', main).forEach(btn => btn.onclick = async () => {
+  note.title = te.value;
+  note.content = be.value;
+  note.updatedAt = Date.now();
+  saveAll();
+  const t = btn.dataset.ai;
+  if (t === 'summary') await aiSummary(note);
+  else if (t === 'expand') await aiExpand(note);
+  else if (t === 'quiz') await aiQuiz(note);
+  else if (t === 'mind') await aiMind(note);
+  else if (t === 'cards') await aiGenCards(note);
+  else if (t === 'feynman') await aiFeynman(note);
+});
 
-    // 删除
-    main.querySelector('[data-act="del"]').onclick = () => deleteNote(nb.id, note.id);
+// 语音输入
+const voiceBtn = $('#voiceInputBtn', main);
+if (voiceBtn) {
+  voiceBtn.onclick = async () => {
+    if (voiceBtn.textContent.includes('停止')) {
+      stopVoiceRecord();
+      voiceBtn.textContent = '🎤 语音输入';
+      voiceBtn.classList.remove('ai-active');
+      return;
+    }
+    const ok = await startVoiceRecord((text) => {
+      const start = be.selectionStart;
+      const before = be.value.slice(0, start);
+      const after = be.value.slice(be.selectionEnd);
+      be.value = before + text + after;
+      be.selectionStart = be.selectionEnd = start + text.length;
+      be.dispatchEvent(new Event('input'));
+      be.focus();
+      voiceBtn.textContent = '🎤 语音输入';
+      voiceBtn.classList.remove('ai-active');
+    });
+    if (ok) {
+      voiceBtn.textContent = '🔴 停止录音';
+      voiceBtn.classList.add('ai-active');
+    }
+  };
+}
+
+
+// 删除
+main.querySelector('[data-act="del"]').onclick = () => deleteNote(nb.id, note.id);
+
   } catch (err) {
     main.innerHTML = `<div class="empty-state"><div class="es-icon">⚠️</div><h3>页面渲染出错</h3><p>${esc(err.message)}</p><button class="btn primary" onclick="localStorage.clear();location.reload()">清空本地数据并刷新</button></div>`;
   }
@@ -441,18 +478,37 @@ function renderReviewCard() {
   el.innerHTML = `
     <div class="rv-progress">${reviewIdx + 1} / ${reviewQueue.length} · S=${(card.S || 0).toFixed(1)}天</div>
     <div class="rv-card" id="rvCard">
-      <div class="rv-front">${esc(card.front)}</div>
+      <div class="rv-front">
+        <button class="rv-speak" id="speakFront" title="朗读正面">
+  <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+</button>
+        <div>${esc(card.front)}</div>
+      </div>
       <div class="rv-back" style="display:none">
         <div class="rv-label">答 案</div>
-        <div class="rv-answer">${esc(card.back)}</div>
+        <div class="rv-answer">
+       <button class="rv-speak" id="speakBack" title="朗读答案">
+  <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+</button>
+          <div>${esc(card.back)}</div>
+        </div>
       </div>
     </div>
     <div class="rv-actions" id="rvActions">
       <button class="btn primary" id="showAns">显示答案</button>
     </div>
   `;
+
+  // 朗读正面
+  $('#speakFront').onclick = () => speakText(card.front);
+
+  // 显示答案
   $('#showAns').onclick = () => {
     $('#rvCard').querySelector('.rv-back').style.display = 'block';
+    // 朗读答案
+    const speakBack = $('#speakBack');
+    if (speakBack) speakBack.onclick = () => speakText(card.back);
+
     const a = $('#rvActions');
     a.innerHTML = `
       <button class="btn danger" data-g="1">忘记</button>
@@ -461,6 +517,7 @@ function renderReviewCard() {
       <button class="btn ghost" data-g="4">太简单</button>
     `;
     $$('button', a).forEach(b => b.onclick = () => {
+   stopSpeak(); // 切下一张前停止朗读
       Object.assign(card, fsrsUpdate(card, +b.dataset.g));
       saveAll();
       reviewIdx++;
@@ -780,6 +837,8 @@ async function ragAnswer(q) {
 function renderStatsView() {
   const main = $('#main');
   const tn = S.notebooks.reduce((a, n) => a + n.notes.length, 0);
+
+
   const tm = Object.values(S.days).reduce((a, b) => a + b, 0);
   // 最近 84 天
   const days = []; const today = new Date();
@@ -811,7 +870,8 @@ function renderStatsView() {
   });
 
   main.innerHTML = `
-    <div class="view-head"><h2>学习统计</h2></div>
+    <div class="view-head"><h2>学习统计</h2> <div class="vh-actions">
+    <button class="btn primary" id="weeklyReportBtn">📅 生成学习周报</button></div></div>
     <div class="settings-wrap">
       <div class="setting-card">
         <h4>📊 总览</h4>
@@ -842,6 +902,9 @@ function renderStatsView() {
       </div>
     </div>
   `;
+// 生成学习周报
+  const wrBtn = $('#weeklyReportBtn');
+  if (wrBtn) wrBtn.onclick = () => aiWeeklyReport();
 }
 
 /* ============ 设置视图 ============ */
@@ -851,7 +914,7 @@ function renderSettingsView() {
     <div class="view-head"><h2>设置</h2></div>
     <div class="settings-wrap">
       <div class="setting-card">
-        <h4>☁️ 云端同步 <span style="color:#5eead4;font-size:11px">默认匿名登录</span></h4>
+        <h4>☁️ 云端同步 <span style="color:#5eead4;font-size:11px">默认游客登录</span></h4>
         <p class="muted" style="margin-bottom:14px">当前状态：<b id="cloudStatusText" style="color:#5eead4">检测中…</b></p>
         <div id="authPanel"></div>
       </div>
@@ -969,4 +1032,93 @@ function snippet(t, q) {
   const i = s.toLowerCase().indexOf(q);
   if (i < 0) return esc(s.slice(0, 60)) + (s.length > 60 ? '…' : '');
   return '…' + esc(s.slice(Math.max(0, i - 18), i + 60)) + '…';
+}
+
+
+/* ============ 错题本视图 ============ */
+function renderWrongView() {
+  const main = $('#main');
+  const list = S.wrongQuestions || [];
+
+  main.innerHTML = `
+    <div class="view-head">
+      <h2>❌ AI 错题本
+        <span style="font-size:11px;color:#7f8da3;font-weight:400">共 ${list.length} 道</span>
+      </h2>
+      <div class="vh-actions">
+        <button class="btn primary" id="analyzeWrong">🧠 AI 分析薄弱点</button>
+        <button class="btn ghost" id="clearWrong">清空错题本</button>
+      </div>
+    </div>
+    <div class="card-list" id="wrongList"></div>
+  `;
+
+  const listEl = $('#wrongList');
+
+  if (!list.length) {
+    listEl.innerHTML = `
+      <div style="padding:60px 20px;text-align:center;color:#65738a;font-size:13px;line-height:2">
+        <div style="font-size:40px;opacity:.4;margin-bottom:12px">📭</div>
+        还没有错题。<br>
+        去任意笔记点击"<b style="color:#5eead4">? 自测题</b>"做几道题，答错的题目会自动收录到这里。
+      </div>
+    `;
+  } else {
+    [...list].reverse().forEach((q, i) => {
+      const realIdx = list.length - i;
+      const row = document.createElement('div');
+      row.className = 'card-row';
+      row.style.cssText = 'display:block;padding:16px 18px';
+
+      const opts = (q.options || []).map((o, idx) => {
+        let style = 'color:#7f8da3';
+        if (idx === q.correctAnswer) style = 'color:#5eead4;font-weight:600';
+        else if (idx === q.chosenAnswer) style = 'color:#fb7185;text-decoration:line-through';
+        const mark = idx === q.correctAnswer ? ' ✓'
+                   : (idx === q.chosenAnswer ? ' ✗' : '');
+        return `<div style="font-size:12.5px;line-height:1.9;${style}">
+          ${String.fromCharCode(65 + idx)}. ${esc(o)}${mark}
+        </div>`;
+      }).join('');
+
+      row.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px">
+          <div style="font-size:13.5px;font-weight:600;color:#dbe7f5;line-height:1.7;flex:1">
+            ${realIdx}. ${esc(q.question)}
+          </div>
+          <button class="cr-del" data-id="${q.id}" title="删除这道错题">✕</button>
+        </div>
+        <div>${opts}</div>
+        ${q.explain ? `
+          <div style="margin-top:10px;padding:8px 12px;border-radius:8px;
+                      background:rgba(148,163,184,.08);
+                      font-size:12px;color:#9aa7bd;line-height:1.85">
+            <b>解析：</b>${esc(q.explain)}
+          </div>
+        ` : ''}
+        <div style="margin-top:10px;font-size:11px;color:#5d6b82">
+          来源：${esc(q.noteTitle || '未命名')} · ${fmtDate(q.createdAt)}
+        </div>
+      `;
+      listEl.appendChild(row);
+    });
+
+    $$('.cr-del', listEl).forEach(b => b.onclick = () => {
+      S.wrongQuestions = S.wrongQuestions.filter(q => q.id !== b.dataset.id);
+      saveAll();
+      renderWrongView();
+      toast('已删除');
+    });
+  }
+
+  $('#analyzeWrong').onclick = () => aiWrongAnalysis();
+
+  $('#clearWrong').onclick = () => {
+    if (!list.length) { toast('已经是空的'); return; }
+    if (!confirm(`确定清空全部 ${list.length} 道错题？`)) return;
+    S.wrongQuestions = [];
+    saveAll();
+    renderWrongView();
+    toast('已清空');
+  };
 }

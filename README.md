@@ -1,9 +1,9 @@
-AI 学习工作台
+# AI 学习工作台
 
 前端 AI 学习工具，包含：笔记、闪卡（FSRS）、思维导图、概念辨析、文档 RAG、学习统计。
 后端只有一个 Netlify Function：`netlify/functions/ai-proxy.js`，负责转发 AI 流式请求。
 
-目录结构
+## 目录结构
 netlify-stream-test/
 ├── index.html        ＃页面结构
 ├── README.md     ＃说明文档
@@ -22,11 +22,12 @@ netlify-stream-test/
 └── netlify/
     └── functions/
         └── ai-proxy.js   #AI代理（流式转发）
+```
 
+## 部署步骤
 
- 部署步骤
-
- 1. 上传到 Netlify把整个 `AI Work‑Study Hub/` 文件夹拖到 Netlify 的 **Deploys** 区域即可。
+### 1. 上传到 Netlify
+把整个 `AI Work‑Study Hub/` 文件夹拖到 Netlify 的 **Deploys** 区域即可。
 
 ### 2. 配置环境变量
 在 Netlify 后台：**Site settings → Environment variables**，添加：
