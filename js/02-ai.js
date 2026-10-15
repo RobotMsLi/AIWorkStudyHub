@@ -1,5 +1,7 @@
+
 /* ============================================================
-   职责：AI 提示词模板 + 6 大 AI 功能（摘要 / 扩展 / 自测题 / 闪卡 / 导图 / 概念辨析/费曼）
+   02-ai.js
+   职责：AI 提示词模板 + 所有 AI 功能
    ============================================================ */
 
 /* ============ 提示词模板 ============ */
@@ -99,7 +101,31 @@ const AI_PROMPTS = {
 [1-2 条可以改进的地方，语气温和]
 
 ### 💡 下周建议
-[2-3 条具体的、可执行的建议]`
+[2-3 条具体的、可执行的建议]`,
+
+  // AI 复习计划（Tool Calling 简化版）
+  studyPlan: '你是一位学习教练。请根据学生的学习数据（错题本、闪卡情况、笔记），生成一份针对性的复习计划。\n\n' +
+    '【学习数据】\n' +
+    '{STATS}\n\n' +
+    '请只输出严格 JSON，格式如下（不要开场白）：\n' +
+    '{\n' +
+    '  "summary": "一句话总结当前学习状态",\n' +
+    '  "topics": [\n' +
+    '    {\n' +
+    '      "title": "薄弱知识点名称",\n' +
+    '      "reason": "为什么它是薄弱点（引用错题数据）",\n' +
+    '      "advice": "具体的学习建议",\n' +
+    '      "cards": [\n' +
+    '        { "front": "闪卡正面（问题）", "back": "闪卡背面（答案）" }\n' +
+    '      ]\n' +
+    '    }\n' +
+    '  ]\n' +
+    '}\n\n' +
+    '要求：\n' +
+    '1. topics 最多 3 个，按优先级排序\n' +
+    '2. 每个 topic 生成 2-3 张闪卡\n' +
+    '3. 闪卡要针对错题涉及的具体知识点\n' +
+    '4. 只输出 JSON，不要任何开场白或总结'
 };
 
 /* ============ AI 摘要 ============ */
@@ -140,7 +166,7 @@ async function aiExpand(note) {
   }
 }
 
-/* ============ AI 自测题（流式接收 + 完成后变卡片） ============ */
+/* ============ AI 自测题（结构化卡片版） ============ */
 async function aiQuiz(note) {
   const c = (note.content || '').trim();
   if (!c) { toast('内容为空', true); return; }
@@ -149,13 +175,7 @@ async function aiQuiz(note) {
   const b = $('.modal-body', m);
 
   try {
-    let raw = '';
-    for await (const chunk of llmStream([
-      { role: 'user', content: AI_PROMPTS.quizJSON.replace('{CONTENT}', c.slice(0, 6000)) }
-    ])) {
-      raw += chunk;
-    }
-
+    const raw = await llmComplete([{ role: 'user', content: AI_PROMPTS.quizJSON.replace('{CONTENT}', c.slice(0, 6000)) }]);
     const mm = raw.match(/\[[\s\S]*\]/);
     if (!mm) throw new Error('AI 返回格式异常');
 
@@ -173,6 +193,131 @@ async function aiQuiz(note) {
   } catch (e) {
     b.innerHTML = `<div style="color:#fb7185;padding:20px">⚠️ 出题失败：${esc(e.message)}</div>`;
   }
+}
+
+/* ============ 自测题卡片渲染 ============ */
+function renderQuizCards(container, questions, note) {
+  let score = 0;
+  let answered = 0;
+  const total = questions.length;
+
+  container.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;
+                margin-bottom:16px;padding:10px 14px;border-radius:10px;
+                background:rgba(45,212,191,.08);border:1px solid rgba(45,212,191,.2);
+                font-size:12.5px;color:#7f8da3">
+      <span>📝 进度：<b id="quizProgress" style="color:#5eead4">0 / ${total}</b></span>
+      <span>🎯 得分：<b id="quizScore" style="color:#5eead4">0</b> / ${total}</span>
+    </div>
+    <div id="quizList"></div>
+  `;
+
+  const list = container.querySelector('#quizList');
+
+  questions.forEach((q, qi) => {
+    const qEl = document.createElement('div');
+    qEl.style.cssText = 'margin-bottom:18px;padding:16px 18px;border-radius:12px;background:rgba(148,163,184,.05);border:1px solid rgba(148,163,184,.15);';
+
+    const opts = (q.options || []).map((opt, oi) => `
+      <button class="quiz-opt" data-q="${qi}" data-o="${oi}" style="
+        display:block;width:100%;text-align:left;margin-top:8px;
+        padding:10px 14px;border-radius:9px;font-size:13px;
+        cursor:pointer;transition:.18s;font-family:inherit;
+        background:rgba(17,24,39,.72);
+        border:1px solid rgba(148,163,184,.2);
+        color:#c3cede;
+      ">
+        <span style="color:#7f8da3;font-weight:600;margin-right:8px">
+          ${String.fromCharCode(65 + oi)}.
+        </span>${esc(opt)}
+      </button>
+    `).join('');
+
+    qEl.innerHTML = `
+      <div style="font-size:13.5px;font-weight:600;color:#dbe7f5;line-height:1.7;margin-bottom:4px">
+        ${qi + 1}. ${esc(q.question)}
+      </div>
+      <div class="quiz-options">${opts}</div>
+      <div class="quiz-result" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;font-size:12.5px;line-height:1.85"></div>
+    `;
+    list.appendChild(qEl);
+  });
+
+  list.addEventListener('click', (e) => {
+    const btn = e.target.closest('.quiz-opt');
+    if (!btn) return;
+
+    const qi = +btn.dataset.q;
+    const oi = +btn.dataset.o;
+    const q = questions[qi];
+    const qEl = list.children[qi];
+    if (qEl.dataset.answered === '1') return;
+
+    qEl.dataset.answered = '1';
+    answered++;
+
+    const opts = qEl.querySelectorAll('.quiz-opt');
+    const correct = +q.answer;
+
+    opts.forEach((opt, idx) => {
+      opt.style.cursor = 'default';
+      if (idx === correct) {
+        opt.style.background = 'rgba(45,212,191,.2)';
+        opt.style.borderColor = 'rgba(45,212,191,.6)';
+        opt.style.color = '#5eead4';
+      } else if (idx === oi) {
+        opt.style.background = 'rgba(244,63,94,.15)';
+        opt.style.borderColor = 'rgba(244,63,94,.5)';
+        opt.style.color = '#fb7185';
+      } else {
+        opt.style.opacity = '.45';
+      }
+    });
+
+    const resultEl = qEl.querySelector('.quiz-result');
+    resultEl.style.display = 'block';
+    const isCorrect = oi === correct;
+
+    if (isCorrect) {
+      score++;
+      resultEl.style.background = 'rgba(45,212,191,.08)';
+      resultEl.style.borderLeft = '3px solid #2dd4bf';
+      resultEl.style.color = '#7fe3d4';
+      resultEl.innerHTML = `<b>✅ 答对了！</b>${q.explain ? '<br>解析：' + esc(q.explain) : ''}`;
+    } else {
+      S.wrongQuestions.push({
+        id: uid(),
+        question: q.question,
+        options: q.options || [],
+        correctAnswer: correct,
+        chosenAnswer: oi,
+        explain: q.explain || '',
+        noteId: note?.id || null,
+        noteTitle: note?.title || '未命名',
+        createdAt: Date.now()
+      });
+      saveAll();
+
+      resultEl.style.background = 'rgba(244,63,94,.08)';
+      resultEl.style.borderLeft = '3px solid #fb7185';
+      resultEl.style.color = '#fb7185';
+      resultEl.innerHTML = `
+        <b>❌ 答错了，已收入错题本</b><br>
+        正确答案：${String.fromCharCode(65 + correct)}<br>
+        ${q.explain ? '解析：' + esc(q.explain) : ''}
+      `;
+    }
+
+    container.querySelector('#quizProgress').textContent = `${answered} / ${total}`;
+    container.querySelector('#quizScore').textContent = score;
+
+    if (answered === total) {
+      const finEl = document.createElement('div');
+      finEl.style.cssText = 'margin-top:16px;padding:16px;border-radius:10px;text-align:center;background:linear-gradient(135deg,rgba(45,212,191,.12),rgba(56,189,248,.08));border:1px solid rgba(45,212,191,.3);font-size:13.5px;color:#5eead4;';
+      finEl.innerHTML = `🎉 全部答完！最终得分：<b>${score} / ${total}</b>`;
+      container.appendChild(finEl);
+    }
+  });
 }
 
 /* ============ AI 生成闪卡 ============ */
@@ -393,131 +538,6 @@ async function aiWeeklyReport() {
   }
 }
 
-/* ============ 自测题：可交互卡片渲染 ============ */
-function renderQuizCards(container, questions, note) {
-  let score = 0;
-  let answered = 0;
-  const total = questions.length;
-
-  container.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;
-                margin-bottom:16px;padding:10px 14px;border-radius:10px;
-                background:rgba(45,212,191,.08);border:1px solid rgba(45,212,191,.2);
-                font-size:12.5px;color:#7f8da3">
-      <span>📝 进度：<b id="quizProgress" style="color:#5eead4">0 / ${total}</b></span>
-      <span>🎯 得分：<b id="quizScore" style="color:#5eead4">0</b> / ${total}</span>
-    </div>
-    <div id="quizList"></div>
-  `;
-
-  const list = container.querySelector('#quizList');
-
-  questions.forEach((q, qi) => {
-    const qEl = document.createElement('div');
-    qEl.style.cssText = 'margin-bottom:18px;padding:16px 18px;border-radius:12px;background:rgba(148,163,184,.05);border:1px solid rgba(148,163,184,.15);';
-
-    const opts = (q.options || []).map((opt, oi) => `
-      <button class="quiz-opt" data-q="${qi}" data-o="${oi}" style="
-        display:block;width:100%;text-align:left;margin-top:8px;
-        padding:10px 14px;border-radius:9px;font-size:13px;
-        cursor:pointer;transition:.18s;font-family:inherit;
-        background:rgba(17,24,39,.72);
-        border:1px solid rgba(148,163,184,.2);
-        color:#c3cede;
-      ">
-        <span style="color:#7f8da3;font-weight:600;margin-right:8px">
-          ${String.fromCharCode(65 + oi)}.
-        </span>${esc(opt)}
-      </button>
-    `).join('');
-
-    qEl.innerHTML = `
-      <div style="font-size:13.5px;font-weight:600;color:#dbe7f5;line-height:1.7;margin-bottom:4px">
-        ${qi + 1}. ${esc(q.question)}
-      </div>
-      <div class="quiz-options">${opts}</div>
-      <div class="quiz-result" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;font-size:12.5px;line-height:1.85"></div>
-    `;
-    list.appendChild(qEl);
-  });
-
-  list.addEventListener('click', (e) => {
-    const btn = e.target.closest('.quiz-opt');
-    if (!btn) return;
-
-    const qi = +btn.dataset.q;
-    const oi = +btn.dataset.o;
-    const q = questions[qi];
-    const qEl = list.children[qi];
-    if (qEl.dataset.answered === '1') return;
-
-    qEl.dataset.answered = '1';
-    answered++;
-
-    const opts = qEl.querySelectorAll('.quiz-opt');
-    const correct = +q.answer;
-
-    opts.forEach((opt, idx) => {
-      opt.style.cursor = 'default';
-      if (idx === correct) {
-        opt.style.background = 'rgba(45,212,191,.2)';
-        opt.style.borderColor = 'rgba(45,212,191,.6)';
-        opt.style.color = '#5eead4';
-      } else if (idx === oi) {
-        opt.style.background = 'rgba(244,63,94,.15)';
-        opt.style.borderColor = 'rgba(244,63,94,.5)';
-        opt.style.color = '#fb7185';
-      } else {
-        opt.style.opacity = '.45';
-      }
-    });
-
-    const resultEl = qEl.querySelector('.quiz-result');
-    resultEl.style.display = 'block';
-    const isCorrect = oi === correct;
-
-    if (isCorrect) {
-      score++;
-      resultEl.style.background = 'rgba(45,212,191,.08)';
-      resultEl.style.borderLeft = '3px solid #2dd4bf';
-      resultEl.style.color = '#7fe3d4';
-      resultEl.innerHTML = `<b>✅ 答对了！</b>${q.explain ? '<br>解析：' + esc(q.explain) : ''}`;
-    } else {
-      S.wrongQuestions.push({
-        id: uid(),
-        question: q.question,
-        options: q.options || [],
-        correctAnswer: correct,
-        chosenAnswer: oi,
-        explain: q.explain || '',
-        noteId: note?.id || null,
-        noteTitle: note?.title || '未命名',
-        createdAt: Date.now()
-      });
-      saveAll();
-
-      resultEl.style.background = 'rgba(244,63,94,.08)';
-      resultEl.style.borderLeft = '3px solid #fb7185';
-      resultEl.style.color = '#fb7185';
-      resultEl.innerHTML = `
-        <b>❌ 答错了，已收入错题本</b><br>
-        正确答案：${String.fromCharCode(65 + correct)}<br>
-        ${q.explain ? '解析：' + esc(q.explain) : ''}
-      `;
-    }
-
-    container.querySelector('#quizProgress').textContent = `${answered} / ${total}`;
-    container.querySelector('#quizScore').textContent = score;
-
-    if (answered === total) {
-      const finEl = document.createElement('div');
-      finEl.style.cssText = 'margin-top:16px;padding:16px;border-radius:10px;text-align:center;background:linear-gradient(135deg,rgba(45,212,191,.12),rgba(56,189,248,.08));border:1px solid rgba(45,212,191,.3);font-size:13.5px;color:#5eead4;';
-      finEl.innerHTML = `🎉 全部答完！最终得分：<b>${score} / ${total}</b>`;
-      container.appendChild(finEl);
-    }
-  });
-}
-
 /* ============ AI 错题分析 ============ */
 async function aiWrongAnalysis() {
   if (!S.wrongQuestions.length) { toast('错题本为空', true); return; }
@@ -562,4 +582,135 @@ ${list}
   } catch (e) {
     b.innerHTML = `<div style="color:#7f8da3">⚠️ 请求未成功：${esc(e.message)}</div>`;
   }
+}
+
+/* ============ AI 复习计划 ============ */
+async function aiStudyPlan() {
+  // 收集错题数据（最近 15 道）
+  const wrongList = S.wrongQuestions.slice(-15).map((q, i) => {
+    const opts = (q.options || []).map((o, idx) =>
+      `  ${String.fromCharCode(65 + idx)}. ${o}`
+    ).join('\n');
+    return `【错题${i + 1}】${q.question}\n${opts}\n正确答案：${String.fromCharCode(65 + q.correctAnswer)}\n我的选择：${String.fromCharCode(65 + q.chosenAnswer)}\n来源笔记：《${q.noteTitle || '未命名'}》`;
+  }).join('\n\n');
+
+  const cardStats = {
+    total: S.cards.length,
+    due: dueCards().length,
+    reviewed: S.cards.filter(c => (c.reps || 0) > 0).length
+  };
+
+  const statsText = `【错题本】共 ${S.wrongQuestions.length} 道错题
+${wrongList || '（暂无错题）'}
+
+【闪卡数据】总计 ${cardStats.total} 张 · 待复习 ${cardStats.due} 张 · 已复习 ${cardStats.reviewed} 张
+
+【笔记数据】共 ${S.notebooks.reduce((a, nb) => a + nb.notes.length, 0)} 篇笔记`;
+
+  // 打开弹窗
+  const m = openModal('🤖 AI 复习计划', `
+    <div style="text-align:center;padding:40px 0">
+      <div style="color:#5eead4;font-size:13px">⏳ AI 正在分析你的学习数据…</div>
+      <div style="color:#7f8da3;font-size:11.5px;margin-top:8px">（预计 5-15 秒）</div>
+    </div>
+  `);
+  const b = $('.modal-body', m);
+
+  try {
+    const raw = await llmComplete([{ role: 'user', content: AI_PROMPTS.studyPlan.replace('{STATS}', statsText) }]);
+    const mm = raw.match(/\{[\s\S]*\}/);
+    if (!mm) throw new Error('AI 返回格式异常');
+
+    let plan;
+    try { plan = JSON.parse(mm[0]); }
+    catch (e1) {
+      try { plan = JSON.parse(mm[0].replace(/\\([^"\\\/bfnrtu])/g, '\\\\$1')); }
+      catch (e2) { plan = JSON.parse(mm[0].replace(/\\/g, '\\\\').replace(/\\\\"/g, '\\"')); }
+    }
+
+    if (!plan || !Array.isArray(plan.topics)) throw new Error('计划格式异常');
+
+    renderStudyPlan(b, plan);
+  } catch (e) {
+    b.innerHTML = `<div style="color:#fb7185;padding:20px">⚠️ 生成失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderStudyPlan(container, plan) {
+  // 顶部总结
+  let html = `
+    <div style="margin-bottom:16px;padding:12px 16px;border-radius:10px;
+                background:rgba(45,212,191,.08);border:1px solid rgba(45,212,191,.25);
+                font-size:13px;color:#7fe3d4;line-height:1.8">
+      📊 ${esc(plan.summary || '')}
+    </div>
+  `;
+
+  // 每个薄弱点
+  (plan.topics || []).forEach((t, i) => {
+    html += `
+      <div style="margin-bottom:16px;padding:14px 16px;border-radius:12px;
+                  background:rgba(148,163,184,.05);border:1px solid rgba(148,163,184,.15)">
+        <div style="font-size:14px;font-weight:600;color:#5eead4;margin-bottom:8px">
+          ${i + 1}. ${esc(t.title || '')}
+        </div>
+        <div style="font-size:12.5px;color:#b7c3d6;margin-bottom:6px;line-height:1.8">
+          <b style="color:#fbbf24">💡 原因：</b>${esc(t.reason || '')}
+        </div>
+        <div style="font-size:12.5px;color:#b7c3d6;margin-bottom:10px;line-height:1.8">
+          <b style="color:#38bdf8">📚 建议：</b>${esc(t.advice || '')}
+        </div>
+        <div style="font-size:12px;color:#5eead4;margin-bottom:6px">推荐闪卡：</div>
+        ${(t.cards || []).map(c => `
+          <div style="padding:8px 12px;margin-bottom:6px;border-radius:8px;
+                      background:rgba(0,0,0,.2);font-size:12px;color:#c3cede;line-height:1.7">
+            <div><b style="color:#7f8da3">Q:</b> ${esc(c.front || '')}</div>
+            <div style="color:#5eead4;margin-top:4px"><b style="color:#7f8da3">A:</b> ${esc(c.back || '')}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  });
+
+  // 底部按钮
+  html += `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
+      <button class="btn primary" id="planExecute">✅ 一键创建所有闪卡</button>
+      <button class="btn ghost" id="planClose">关闭</button>
+    </div>
+  `;
+
+  container.innerHTML = html;
+
+  // 一键创建所有闪卡
+  container.querySelector('#planExecute').onclick = () => {
+    let count = 0;
+    (plan.topics || []).forEach(t => {
+      (t.cards || []).forEach(c => {
+        if (c.front && c.back) {
+          S.cards.push({
+            id: uid(),
+            noteId: null,
+            notebookId: S.activeNotebookId,
+            front: String(c.front),
+            back: String(c.back),
+            D: 5, S: 0, reps: 0, lapses: 0,
+            due: Date.now(),
+            createdAt: Date.now(),
+            lastReview: Date.now()
+          });
+          count++;
+        }
+      });
+    });
+    saveAll();
+    toast(`已创建 ${count} 张闪卡 🎴`);
+    renderTopStats();
+    container.closest('.modal-backdrop').remove();
+  };
+
+  // 关闭
+  container.querySelector('#planClose').onclick = () => {
+    container.closest('.modal-backdrop').remove();
+  };
 }
