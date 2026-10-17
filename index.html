@@ -1,40 +1,34 @@
+
+
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <!-- 移动端友好，禁止双击缩放 -->
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-  <title>AI 学习工作台</title>
-  <!-- KaTeX 数学公式样式 -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-  <!-- 项目主样式 -->
-  <link rel="stylesheet" href="./css/style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>AI 学习工作台</title>
+<link rel="stylesheet" href="./css/lib/katex.min.css">
+<link rel="stylesheet" href="./css/style.css">
 </head>
 <body>
 <div class="app">
 
   <!-- ==================== 顶栏 ==================== -->
   <header class="topbar">
-    <!-- 移动端菜单按钮（小屏才显示） -->
     <button class="icon-btn mobile-only" id="mobileMenuBtn">☰</button>
 
-    <!-- Logo -->
     <div class="logo">
       <div class="logo-mark">AI</div>
       <div class="logo-text">AI 学习工作台</div>
     </div>
 
-    <!-- 侧栏折叠按钮（桌面端用，默认隐藏） -->
     <button class="icon-btn" id="collapseBtn" style="display:none">☰</button>
 
-    <!-- 全局搜索框 -->
     <div class="tb-search">
       <input id="globalSearch" placeholder="搜索笔记…" autocomplete="off">
       <button class="btn-search" id="searchBtn">搜索</button>
       <div class="search-results" id="searchResults"></div>
     </div>
 
-    <!-- 右侧状态区 -->
     <div class="tb-right">
       <div class="stat" title="今日学习时长"><span id="todayTime">0 秒</span><small>今日</small></div>
       <div class="stat" title="待复习闪卡"><span id="dueCount">0</span><small>待复习</small></div>
@@ -51,10 +45,8 @@
   <!-- ==================== 主体区 ==================== -->
   <div class="layout">
 
-    <!-- 侧栏遮罩（移动端弹出侧栏时显示） -->
     <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
-    <!-- 左侧栏：导航 + 笔记本列表 -->
     <aside class="sidebar" id="sidebar">
       <nav class="nav" id="nav">
         <button class="nav-item active" data-view="notes"><span class="ni">📝</span><span class="nt">智能笔记</span></button>
@@ -72,13 +64,10 @@
       </div>
     </aside>
 
-    <!-- 主内容区（由 JS 动态渲染） -->
     <main class="main" id="main"></main>
 
-    <!-- AI 面板遮罩 -->
     <div class="ai-backdrop" id="aiBackdrop"></div>
 
-    <!-- 右侧 AI 聊天面板 -->
     <aside class="ai-panel" id="aiPanel">
       <div class="ai-head">
         <div class="ai-title"><span class="dot-ind" id="aiDot"></span> AI 小助手</div>
@@ -100,7 +89,7 @@
   </div>
 </div>
 
-<!-- 命令面板（Ctrl/Cmd+K 呼出） -->
+<!-- 命令面板 -->
 <div class="cmdk-backdrop" id="cmdkBackdrop">
   <div class="cmdk">
     <input class="cmdk-input" id="cmdkInput" placeholder="输入命令或搜索…">
@@ -108,15 +97,15 @@
   </div>
 </div>
 
-<!-- ==================== 第三方库 ==================== -->
-<script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- ==================== 第三方库（全部本地化） ==================== -->
+<script src="./js/lib/marked.min.js"></script>
+<script src="./js/lib/katex.min.js"></script>
+<script src="./js/lib/auto-render.min.js"></script>
+<script src="./js/lib/supabase.min.js"></script>
+<script src="./js/lib/mammoth.browser.min.js"></script>
+<script src="./js/lib/xlsx.full.min.js"></script>
 
-<!-- ==================== 业务代码==================== -->
+<!-- ==================== 业务代码（顺序不能乱） ==================== -->
 <script src="./js/01-core.js"></script>
 <script src="./js/02-ai.js"></script>
 <script src="./js/03-cloud.js"></script>

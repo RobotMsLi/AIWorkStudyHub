@@ -296,7 +296,6 @@ function renderNotesView() {
   <button class="chip" data-ai="mind">◈ 导图</button>
   <button class="chip" data-ai="cards">▣ 闪卡</button>
   <button class="chip" data-ai="feynman">🎓 费曼</button>
-<button class="chip" data-ai="studyplan">🤖 复习计划</button>
  <button class="chip" id="voiceInputBtn">🎤 语音输入</button>
   <button class="chip danger" data-act="del">🗑 删除</button>
 </div>
@@ -364,7 +363,6 @@ $$('[data-ai]', main).forEach(btn => btn.onclick = async () => {
   else if (t === 'mind') await aiMind(note);
   else if (t === 'cards') await aiGenCards(note);
   else if (t === 'feynman') await aiFeynman(note);
-  else if (t === 'studyplan') await aiStudyPlan();
 });
 
 // 语音输入
@@ -1048,10 +1046,9 @@ function renderWrongView() {
         <span style="font-size:11px;color:#7f8da3;font-weight:400">共 ${list.length} 道</span>
       </h2>
       <div class="vh-actions">
-  <button class="btn primary" id="studyPlanBtn">🤖 AI 生成复习计划</button>
-  <button class="btn ghost" id="analyzeWrong">🧠 AI 分析薄弱点</button>
-  <button class="btn ghost" id="clearWrong">清空错题本</button>
-</div>
+        <button class="btn primary" id="analyzeWrong">🧠 AI 分析薄弱点</button>
+        <button class="btn ghost" id="clearWrong">清空错题本</button>
+      </div>
     </div>
     <div class="card-list" id="wrongList"></div>
   `;
@@ -1114,7 +1111,6 @@ function renderWrongView() {
     });
   }
 
- $('#studyPlanBtn').onclick = () => aiStudyPlan();
   $('#analyzeWrong').onclick = () => aiWrongAnalysis();
 
   $('#clearWrong').onclick = () => {
