@@ -296,6 +296,7 @@ function renderNotesView() {
   <button class="chip" data-ai="mind">◈ 导图</button>
   <button class="chip" data-ai="cards">▣ 闪卡</button>
   <button class="chip" data-ai="feynman">🎓 费曼</button>
+<button class="chip" id="solvePhotoBtn">📷 拍题解析</button>
  <button class="chip" id="voiceInputBtn">🎤 语音输入</button>
   <button class="chip danger" data-act="del">🗑 删除</button>
 </div>
@@ -364,6 +365,98 @@ $$('[data-ai]', main).forEach(btn => btn.onclick = async () => {
   else if (t === 'cards') await aiGenCards(note);
   else if (t === 'feynman') await aiFeynman(note);
 });
+
+// 拍题解析
+    const solvePhotoBtn = $('#solvePhotoBtn', main);
+    if (solvePhotoBtn) {
+      solvePhotoBtn.onclick = () => {
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = 'image/*';
+        inp.capture = 'environment';
+        inp.onchange = async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          if (file.size > 10 * 1024 * 1024) { toast('图片超过 10MB，请压缩后再试', true); return; }
+
+          let imageData;
+          try {
+            imageData = await compressImage(file, 1024, 0.8);
+          } catch (err) {
+            toast('图片处理失败：' + err.message, true);
+            return;
+          }
+
+          // 【简化】loading 界面不再插入图片预览
+          const m = openModal('📷 拍题解析', `
+            <div style="text-align:center;padding:40px 0">
+              <div style="color:#5eead4;font-size:13px">⏳ AI 正在识别题目并解答…</div>
+              <div style="color:#7f8da3;font-size:11.5px;margin-top:8px">（预计 5-15 秒）</div>
+            </div>
+          `);
+          const b = $('.modal-body', m);
+
+          try {
+            let full = '';
+            let initialized = false;
+
+            for await (const chunk of solveStream({ image: imageData })) {
+              full += chunk;
+
+              if (!initialized) {
+                initialized = true;
+                // 【简化】不再插入图片预览，只保留结果容器
+                b.innerHTML = `<div class="preview" id="solveResult" style="font-size:13px;line-height:1.9;color:#c3cede"></div>`;
+              }
+
+              const target = $('#solveResult', b);
+              if (target) {
+                let cleaned = full;
+                const firstCn = full.search(/[\u4e00-\u9fa5]/);
+                if (firstCn > 0) cleaned = full.slice(firstCn);
+                renderMDWithMath(target, cleaned);
+                b.scrollTop = b.scrollHeight;
+              }
+            }
+
+            if (!full.trim()) {
+              b.innerHTML = `<div style="color:#fb7185;padding:20px">⚠️ AI 没有返回内容，请检查图片是否清晰</div>`;
+              return;
+            }
+
+            const btnBox = document.createElement('div');
+            btnBox.style.cssText = 'margin-top:16px;padding-top:12px;border-top:1px dashed rgba(148,163,184,.25);display:flex;gap:10px;flex-wrap:wrap';
+            btnBox.innerHTML = `
+              <button class="btn primary" id="insertToNote">📝 插入到当前笔记</button>
+              <button class="btn ghost" id="closeSolve">关闭</button>
+            `;
+            b.appendChild(btnBox);
+
+            b.querySelector('#insertToNote').onclick = () => {
+              const noteBody = $('#noteBody');
+              if (noteBody) {
+                const start = noteBody.selectionStart;
+                const before = noteBody.value.slice(0, start);
+                const after = noteBody.value.slice(noteBody.selectionEnd);
+                const text = '\n\n---\n\n### 📷 拍题解析\n\n' + full + '\n';
+                noteBody.value = before + text + after;
+                noteBody.dispatchEvent(new Event('input'));
+                toast('已插入到笔记');
+                m.remove();
+              } else {
+                toast('请先打开一篇笔记', true);
+              }
+            };
+            b.querySelector('#closeSolve').onclick = () => m.remove();
+
+          } catch (e) {
+            b.innerHTML = `<div style="color:#fb7185;padding:20px">⚠️ 解析失败：${esc(e.message)}</div>`;
+          }
+        };
+        inp.click();
+      };
+    }
+
 
 // 语音输入
 const voiceBtn = $('#voiceInputBtn', main);

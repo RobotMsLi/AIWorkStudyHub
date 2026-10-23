@@ -2,7 +2,7 @@
 /* ============================================================
    01-core.js
    职责：常量 / 工具 / 存储 / Supabase / 状态 / Markdown / LLM 流
-        / 分词 / FSRS / UI 工具 / 百度语音（ASR+TTS）/ 浏览器 TTS
+        / 分词 / FSRS / UI 工具 / 腾讯云 ASR / 浏览器 TTS / 拍题解析
    ============================================================ */
 
 /* ============ Supabase 配置 ============ */
@@ -211,24 +211,134 @@ function renderMD(t) {
   catch (e) { return esc(t).replace(/\n/g, '<br>'); }
 }
 
-function renderMDWithMath(el, t) {
-  el.innerHTML = renderMD(t);
-  if (window.renderMathInElement) {
-    try {
-      renderMathInElement(el, {
-        delimiters: [
-          { left: '$$', right: '$$', display: true },
-          { left: '\\[', right: '\\]', display: true },
-          { left: '$', right: '$', display: false },
-          { left: '\\(', right: '\\)', display: false }
-        ],
-        throwOnError: false
-      });
-    } catch (e) {}
-  }
+/* ============ LaTeX 清洗 ============ */
+function cleanLatex(text) {
+  if (!text) return text;
+  let s = String(text);
+  s = s.replace(/(\\begin\{[^}]+\}[\s\S]*?\\end\{[^}]+\})/g, (block) => {
+    return block.replace(/([^\\])\\(?=\s*\n)/g, '$1\\\\');
+  });
+  s = s.replace(/\\begin\{vmatrix\}/g, '\\begin{bmatrix}');
+  s = s.replace(/\\end\{vmatrix\}/g, '\\end{bmatrix}');
+  s = s.replace(/\\begin\{Vmatrix\}/g, '\\begin{Bmatrix}');
+  s = s.replace(/\\end\{Vmatrix\}/g, '\\end{Bmatrix}');
+  s = s.replace(/\\textbf\{([^}]*)\}/g, '\\text{$1}');
+  s = s.replace(/\\\$/g, '$');
+  return s;
 }
 
-/* ============ 流式 LLM（走后端代理） ============ */
+/* ============ 过滤 AI 回显的图片数据（多级兜底） ============ */
+function stripImageEcho(text) {
+  if (!text) return '';
+  let src = String(text);
+
+  // 1. 移除 <img> 或 < img> 标签（支持 < 和 img 之间有空格，跨行）
+  src = src.replace(/<\s*img[\s\S]*?>/gi, '');
+
+  // 2. 移除裸露的 base64 数据
+  src = src.replace(/data:image\/[a-z]+;base64,[A-Za-z0-9+/=\s]{50,}/gi, '');
+
+  // 3. 移除 src="data:image..." 片段
+  src = src.replace(/src\s*=\s*["']?data:image[^"'>]*["']?/gi, '');
+
+  // 4. 移除残留的 style="max-width..." 属性
+  src = src.replace(/style\s*=\s*["'][^"']*max-width[^"']*["']/gi, '');
+
+  // 5. 【终极兜底】找关键词截断
+  const meaningful = src.search(/(好的[，,。]?\s*以下是|好的[，,。]?\s*下面|以下是针对|以下是关于|题目\s*\d|第\s*\d+\s*题|这道题|这道题目)/);
+  if (meaningful > 0 && meaningful < 1500) {
+    src = src.slice(meaningful);
+  } else {
+    // 6. 找不到关键词，从第一个连续中文汉字开始（丢弃前面的乱码）
+    const cnMatch = src.match(/[\u4e00-\u9fa5]{2,}/);
+    if (cnMatch && cnMatch.index > 0 && cnMatch.index < 1500) {
+      const prefix = src.slice(0, cnMatch.index);
+      if (/base64|<\s*img|data:image|style\s*=/i.test(prefix)) {
+        src = src.slice(cnMatch.index);
+      }
+    }
+  }
+
+  return src.trim();
+}
+
+/* ============ Markdown + 数学公式渲染（保护式） ============ */
+function renderMDWithMath(el, t) {
+  if (!t) { el.innerHTML = ''; return; }
+
+  // 第 0 步：多级过滤，干掉 AI 回显的图片数据
+  let src = stripImageEcho(String(t));
+  src = cleanLatex(src);
+
+  // 第 1 步：提取所有 LaTeX 公式
+  const formulas = [];
+  const protectedText = src
+    .replace(/\$\$([\s\S]*?)\$\$/g, (m, body) => {
+      const idx = formulas.length;
+      formulas.push({ type: 'block', content: body.trim() });
+      return `\n\n@@LATEX_BLOCK_${idx}@@\n\n`;
+    })
+    .replace(/\$([^\$\n]+?)\$/g, (m, body) => {
+      const idx = formulas.length;
+      formulas.push({ type: 'inline', content: body.trim() });
+      return `@@LATEX_INLINE_${idx}@@`;
+    });
+
+  // 第 2 步：渲染 markdown
+  el.innerHTML = renderMD(protectedText);
+
+  // 第 3 步：替换占位符为渲染好的公式
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+  const textNodes = [];
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node.nodeValue && node.nodeValue.includes('@@LATEX_')) {
+      textNodes.push(node);
+    }
+  }
+
+  textNodes.forEach((textNode) => {
+    const parts = textNode.nodeValue.split(/(@@LATEX_(?:BLOCK|INLINE)_\d+@@)/);
+    if (parts.length === 1) return;
+
+    const frag = document.createDocumentFragment();
+    parts.forEach((part) => {
+      const blockMatch = part.match(/^@@LATEX_BLOCK_(\d+)@@$/);
+      const inlineMatch = part.match(/^@@LATEX_INLINE_(\d+)@@$/);
+      if (blockMatch || inlineMatch) {
+        const idx = parseInt((blockMatch || inlineMatch)[1], 10);
+        const f = formulas[idx];
+        if (f) {
+          const span = document.createElement(blockMatch ? 'div' : 'span');
+          if (blockMatch) span.style.cssText = 'margin:12px 0;text-align:center;overflow-x:auto';
+          try {
+            if (window.katex) {
+              span.innerHTML = katex.renderToString(f.content, {
+                displayMode: f.type === 'block',
+                throwOnError: false,
+                strict: false,
+                trust: true,
+                errorColor: '#5eead4'
+              });
+            } else {
+              span.textContent = (f.type === 'block' ? '$$' : '$') + f.content + (f.type === 'block' ? '$$' : '$');
+            }
+          } catch (e) {
+            span.textContent = (f.type === 'block' ? '$$' : '$') + f.content + (f.type === 'block' ? '$$' : '$');
+          }
+          frag.appendChild(span);
+        } else {
+          frag.appendChild(document.createTextNode(part));
+        }
+      } else {
+        frag.appendChild(document.createTextNode(part));
+      }
+    });
+    textNode.parentNode.replaceChild(frag, textNode);
+  });
+}
+
+/* ============ 流式 LLM ============ */
 async function* llmStream(messages, opts = {}) {
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 60000);
@@ -269,6 +379,49 @@ async function llmComplete(messages) {
   let o = '';
   for await (const c of llmStream(messages)) o += c;
   return o;
+}
+
+/* ============ 拍题解析流式请求 ============ */
+async function* solveStream({ image, prompt }) {
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 90000);
+  try {
+    const res = await fetch('/.netlify/functions/ai-proxy?action=solve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: image, prompt: prompt || '' }),
+      signal: ctrl.signal
+    });
+    if (!res.ok) {
+      const e = await res.text();
+      throw new Error(`请求失败 (${res.status}): ${e.slice(0, 200)}`);
+    }
+    if (!res.body) throw new Error('浏览器不支持流式读取');
+
+    const rd = res.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await rd.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const d = line.slice(5).trim();
+        if (d === '[DONE]') return;
+        try {
+          const j = JSON.parse(d);
+          if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
+          if (j.choices?.[0]?.delta?.content) yield j.choices[0].delta.content;
+        } catch (parseErr) {
+          if (parseErr.message && parseErr.message.includes('error')) throw parseErr;
+        }
+      }
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /* ============ 分词 / 关键词 ============ */
@@ -379,7 +532,7 @@ function startInlineEdit(textEl, val, onSave) {
 }
 
 /* ============================================================
-   百度语音工具（ASR 语音输入）
+   语音输入（腾讯云 ASR）
    ============================================================ */
 let _mediaRecorder = null;
 let _audioChunks = [];
@@ -483,7 +636,7 @@ function stopVoiceRecord() {
 }
 
 /* ============================================================
-   浏览器原生语音朗读（用于闪卡，本地免费）
+   浏览器原生文字转语音（闪卡朗读）
    ============================================================ */
 function speakText(text, opts = {}) {
   if (!window.speechSynthesis) {
@@ -503,4 +656,32 @@ function speakText(text, opts = {}) {
 
 function stopSpeak() {
   try { window.speechSynthesis.cancel(); } catch (e) {}
+}
+
+/* ============================================================
+   图片压缩（拍题解析用）
+   ============================================================ */
+function compressImage(file, maxSize = 1024, quality = 0.8) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > h && w > maxSize) { h = Math.round(h * maxSize / w); w = maxSize; }
+        else if (h > maxSize) { w = Math.round(w * maxSize / h); h = maxSize; }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        try { resolve(canvas.toDataURL('image/jpeg', quality)); }
+        catch (err) { reject(err); }
+      };
+      img.onerror = () => reject(new Error('图片加载失败'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('文件读取失败'));
+    reader.readAsDataURL(file);
+  });
 }
